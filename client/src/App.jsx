@@ -1,5 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 
+import ShapeGrid from "./ShapeGrid.jsx";
+
 const EMPTY_EVENT = {
   is_event_poster: true,
   title: "",
@@ -222,8 +224,30 @@ function App() {
       const formData = new FormData();
       formData.append("poster", file);
       const response = await fetch("/api/extract", { method: "POST", body: formData });
-      const body = await response.json();
+      // Read as text first: proxy/startup failures can return an empty body or
+      // an HTML error page, neither of which response.json() can parse.
+      const responseText = await response.text();
+      let body = null;
+      if (responseText.trim()) {
+        try {
+          body = JSON.parse(responseText);
+        } catch {
+          body = null;
+        }
+      }
+
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        if (!response.ok) {
+          throw new Error(`The poster reader server returned an unreadable response (HTTP ${response.status}). Check that the backend is running, then try again.`);
+        }
+        throw new Error("The poster reader server returned an empty response. Restart the backend and try again.");
+      }
+
       if (!response.ok) throw new Error(body.error || "We couldn't read that poster. Please try again.");
+
+      if (!body.event || typeof body.event !== "object") {
+        throw new Error("The poster reader returned incomplete event details. Please try again.");
+      }
 
       const extracted = body.event;
       setEvent({
@@ -267,6 +291,25 @@ function App() {
 
   return (
     <div className="app-shell bg-canvas font-body text-ink" data-theme={theme}>
+      <div className="app-background-grid" aria-hidden="true">
+        <ShapeGrid
+          shape="square"
+          direction="diagonal"
+          lineColor={theme === "dark" ? "#2b3e32" : "#b7d0be"}
+          hoverColor={theme === "dark" ? "#69a982" : "#0F5132"}
+          hoverFillColor={theme === "dark" ? "#69a982" : "#0F5132"}
+          fillOpacity={0.45}
+          cellSize={40}
+          speed={0.5}
+          tiltX={0}
+          tiltY={0}
+          rainbow={false}
+          opacity={0.55}
+          glow={0.08}
+          clickCascade={false}
+          backgroundColor={theme === "dark" ? "#171d19" : "#FAF6EE"}
+        />
+      </div>
       <header className="app-header">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4 sm:px-8">
           <a href="#top" className="flex items-center gap-3 text-ink no-underline" aria-label="Campus Poster Reader home">

@@ -43,10 +43,26 @@ label:focus-visible {
 }
 
 .app-shell {
+  position: relative;
+  isolation: isolate;
   min-height: 100vh;
-  background: var(--color-canvas);
+  background: transparent;
   color: var(--color-ink);
   color-scheme: light;
+}
+
+.app-background-grid {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+}
+
+.app-header,
+.app-shell > main,
+.app-shell > footer {
+  position: relative;
+  z-index: 1;
 }
 
 .app-shell[data-theme="dark"] {
@@ -76,7 +92,7 @@ label:focus-visible {
 
 .app-header {
   border-bottom: 1px solid var(--color-line);
-  background: var(--color-canvas);
+  background: transparent;
 }
 
 .form-control {

@@ -10,7 +10,7 @@ dotenv.config({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
 const app = express();
 const port = Number(process.env.PORT) || 3001;
 const timezone = "Africa/Accra";
-const model = process.env.GEMMA_MODEL || "gemma-4-31b-it";
+const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const maxUploadBytes = 8 * 1024 * 1024;
 
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || "*" }));
@@ -98,12 +98,12 @@ app.get("/api/health", (_request, response) => {
 
 app.post("/api/extract", upload.single("poster"), async (request, response) => {
   if (!request.file) {
-    response.status(400).json({ error: "Choose a poster image to upload." });
+    response.status(400).json({ error: "Choose a poster image to upload.", model });
     return;
   }
 
   if (!process.env.GEMINI_API_KEY) {
-    response.status(500).json({ error: "The server is missing its GEMINI_API_KEY." });
+    response.status(500).json({ error: "The server is missing its GEMINI_API_KEY.", model });
     return;
   }
 
@@ -129,35 +129,66 @@ app.post("/api/extract", upload.single("poster"), async (request, response) => {
 
     let event;
     try {
+      if (typeof result.text !== "string" || !result.text.trim()) {
+        throw new Error("Gemma returned an empty response.");
+      }
       event = extractJsonObject(result.text);
       if (!validateEvent(event)) throw new Error("The JSON did not match the event format.");
-    } catch {
+    } catch (error) {
+      console.warn("Model returned an unreadable poster response:", error.message);
       response.status(422).json({
         error: "Couldn't read the poster clearly, try a sharper, well-lit photo",
+        model,
       });
       return;
     }
 
     response.json({ event, timezone, model });
   } catch (error) {
-    console.error("Gemma poster extraction failed:", error);
-    response.status(500).json({ error: "Gemma could not read the poster right now. Please try again." });
+    const status = Number(error?.status) || 0;
+    const apiKey = process.env.GEMINI_API_KEY;
+    const providerMessage = String(error?.message || "Unknown error")
+      .replaceAll(apiKey || "\u0000", "[redacted]")
+      .slice(0, 500);
+
+    console.error("Gemini poster extraction failed:", {
+      status: status || "network/unknown",
+      name: error?.name || "Error",
+      message: providerMessage,
+    });
+
+    let message;
+    if (status === 400) {
+      message = `Gemini rejected the request (400): ${providerMessage}`;
+    } else if (status === 401 || status === 403) {
+      message = `Gemini API access was denied (${status}). Check that the API key is valid, has no incompatible restrictions, and the Gemini API is enabled for its Google project.`;
+    } else if (status === 404) {
+      message = `Gemini could not find model "${model}". Check GEMINI_MODEL in .env.`;
+    } else if (status === 429) {
+      message = `Gemini API quota or rate limit reached (429): ${providerMessage}`;
+    } else if (status) {
+      message = `Gemini API returned HTTP ${status}: ${providerMessage}`;
+    } else {
+      message = `Could not reach the Gemini API: ${providerMessage}`;
+    }
+
+    response.status(500).json({ error: message, model });
   }
 });
 
 app.use((error, _request, response, _next) => {
   if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
-    response.status(413).json({ error: "The image must be 8 MB or smaller." });
+    response.status(413).json({ error: "The image must be 8 MB or smaller.", model });
     return;
   }
 
   if (error.code === "INVALID_FILE_TYPE") {
-    response.status(400).json({ error: error.message });
+    response.status(400).json({ error: error.message, model });
     return;
   }
 
   console.error("Request failed:", error);
-  response.status(500).json({ error: "The server could not process that request." });
+  response.status(500).json({ error: "The server could not process that request.", model });
 });
 
 app.listen(port, () => {

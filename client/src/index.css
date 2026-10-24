@@ -1,0 +1,179 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+:root {
+  font-family: var(--font-body), sans-serif;
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--color-canvas);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--color-canvas);
+  font-family: var(--font-body), sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+label:focus-visible {
+  outline: 3px solid var(--color-forest);
+  outline-offset: 3px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  color-scheme: light;
+}
+
+.app-shell[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: #171d19;
+  --color-ink: #f8f4e9;
+  --color-forest: #4c9564;
+  --color-gold: #e6b938;
+  --color-gold-ink: #f0c65c;
+  --color-danger: #ed847a;
+  --color-paper: #202923;
+  --color-line: #465149;
+  --color-muted: #bdc5bc;
+  --color-warning-background: #483b1c;
+  --color-warning-foreground: #fff0c7;
+  --color-warning-border: #b38b25;
+}
+
+.app-shell[data-theme="dark"] .bg-forest {
+  background-color: #0f5132;
+}
+
+.app-shell[data-theme="dark"] button.bg-forest:hover,
+.app-shell[data-theme="dark"] label.bg-forest:hover {
+  color: #1c1a17;
+}
+
+.app-header {
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-canvas);
+}
+
+.form-control {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.form-control::placeholder {
+  color: var(--color-muted);
+  opacity: 0.8;
+}
+
+.form-control:focus-visible {
+  border-color: var(--color-forest);
+  outline: 3px solid var(--color-forest);
+  outline-offset: 2px;
+}
+
+.result-enter {
+  animation: result-enter 180ms ease-out both;
+}
+
+.reading-pulse {
+  animation: reading-pulse 1.15s ease-in-out infinite alternate;
+}
+
+.event-ticket {
+  position: relative;
+  border: 1px solid var(--color-line);
+  background: var(--color-paper);
+}
+
+.ticket-stub {
+  position: relative;
+  border-block: 1px dashed var(--color-line);
+}
+
+.ticket-stub::before,
+.ticket-stub::after {
+  position: absolute;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-line);
+  border-radius: 50%;
+  background: var(--color-canvas);
+  content: "";
+  transform: translateY(-50%);
+}
+
+.ticket-stub::before {
+  left: -12px;
+  border-left-color: transparent;
+}
+
+.ticket-stub::after {
+  right: -12px;
+  border-right-color: transparent;
+}
+
+.date-time-control {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+.confidence-tag {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+@keyframes result-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes reading-pulse {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

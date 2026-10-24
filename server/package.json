@@ -1,0 +1,17 @@
+{
+  "name": "campus-poster-reader-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google/genai": "2.31.0",
+    "cors": "2.8.6",
+    "dotenv": "18.0.9",
+    "express": "5.3.0",
+    "multer": "2.5.0"
+  }
+}

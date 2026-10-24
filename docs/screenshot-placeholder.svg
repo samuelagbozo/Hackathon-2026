@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title description">
+  <title id="title">Screenshot placeholder for Campus Poster Reader</title>
+  <desc id="description">A placeholder graphic to be replaced with a screenshot of the running application.</desc>
+  <rect width="1440" height="900" fill="#f5f7f3"/>
+  <rect x="42" y="42" width="1356" height="816" rx="30" fill="#ffffff" stroke="#dfe8dd" stroke-width="3"/>
+  <rect x="112" y="112" width="1216" height="676" rx="24" fill="#f7faf5" stroke="#d9e5d7" stroke-width="3" stroke-dasharray="12 12"/>
+  <g fill="none" stroke="#8ba98e" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="645" y="318" width="150" height="190" rx="18"/>
+    <path d="M680 370h80M680 410h80M680 450h48"/>
+    <path d="M560 560h320"/>
+  </g>
+  <text x="720" y="632" fill="#284331" font-family="Arial, sans-serif" font-size="36" font-weight="700" text-anchor="middle">App screenshot coming soon</text>
+  <text x="720" y="682" fill="#7b8c7e" font-family="Arial, sans-serif" font-size="22" text-anchor="middle">Replace this placeholder after running Campus Poster Reader</text>
+</svg>

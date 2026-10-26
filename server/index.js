@@ -4,14 +4,20 @@ import express from "express";
 import multer from "multer";
 import { GoogleGenAI } from "@google/genai";
 import { fileURLToPath } from "node:url";
+import { generateWithGemmaFallback, isRetryableGeminiError, parseGemmaModels } from "./geminiRetry.js";
 
 dotenv.config({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
 const timezone = "Africa/Accra";
-const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+const models = parseGemmaModels(process.env.GEMMA_MODELS);
+const model = models[0];
+const busyMessage = "The AI model is busy right now. Please try again in a minute.";
 const maxUploadBytes = 8 * 1024 * 1024;
+const geminiCallTimeoutMs = 45_000;
+const extractionRequestTimeoutMs = 50_000;
+let extractionRequestSequence = 0;
 
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || "*" }));
 
@@ -29,6 +35,46 @@ const upload = multer({
     callback(null, true);
   },
 });
+
+function logExtractionRequest(request, response, next) {
+  request.extractionRequestId = ++extractionRequestSequence;
+  request.extractionStartedAt = Date.now();
+  console.info(`[extract ${request.extractionRequestId}] Request received.`);
+
+  response.on("finish", () => {
+    const durationMs = Date.now() - request.extractionStartedAt;
+    console.info(`[extract ${request.extractionRequestId}] HTTP ${response.statusCode} completed in ${durationMs}ms.`);
+  });
+
+  response.on("close", () => {
+    if (!response.writableFinished) {
+      console.warn(`[extract ${request.extractionRequestId}] Client disconnected after ${Date.now() - request.extractionStartedAt}ms.`);
+    }
+  });
+
+  next();
+}
+
+function setExtractionDeadline(request, response, next) {
+  const controller = new AbortController();
+  request.extractionSignal = controller.signal;
+
+  const clearDeadline = () => clearTimeout(deadlineTimer);
+  const deadlineTimer = setTimeout(() => {
+    const elapsedMs = Date.now() - request.extractionStartedAt;
+    console.error(`[extract ${request.extractionRequestId}] Overall ${extractionRequestTimeoutMs}ms request limit reached after ${elapsedMs}ms.`);
+    controller.abort(new Error("Overall poster extraction request timed out."));
+    if (!response.headersSent) response.status(503).json({ error: busyMessage, model });
+  }, extractionRequestTimeoutMs);
+
+  response.on("finish", clearDeadline);
+  response.on("close", () => {
+    clearDeadline();
+    if (!response.writableFinished) controller.abort(new Error("Client disconnected."));
+  });
+
+  next();
+}
 
 function todayInTimezone(timeZone) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -93,38 +139,68 @@ function validateEvent(value) {
 }
 
 app.get("/api/health", (_request, response) => {
-  response.json({ ok: true, model, timezone });
+  response.json({ ok: true, model, models, timezone });
 });
 
-app.post("/api/extract", upload.single("poster"), async (request, response) => {
+app.post("/api/extract", logExtractionRequest, setExtractionDeadline, upload.single("poster"), async (request, response) => {
+  if (response.headersSent || request.extractionSignal.aborted) return;
+
   if (!request.file) {
+    console.warn(`[extract ${request.extractionRequestId}] No poster file was uploaded.`);
     response.status(400).json({ error: "Choose a poster image to upload.", model });
     return;
   }
 
   if (!process.env.GEMINI_API_KEY) {
+    console.error(`[extract ${request.extractionRequestId}] GEMINI_API_KEY is not configured.`);
     response.status(500).json({ error: "The server is missing its GEMINI_API_KEY.", model });
     return;
   }
 
   try {
     const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const result = await client.models.generateContent({
-      model,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              inlineData: {
-                mimeType: request.file.mimetype,
-                data: request.file.buffer.toString("base64"),
-              },
+    const contents = [
+      {
+        role: "user",
+        parts: [
+          {
+            inlineData: {
+              mimeType: request.file.mimetype,
+              data: request.file.buffer.toString("base64"),
             },
-            { text: buildPrompt(todayInTimezone(timezone)) },
-          ],
-        },
-      ],
+          },
+          { text: buildPrompt(todayInTimezone(timezone)) },
+        ],
+      },
+    ];
+    const { result, model: answeredModel } = await generateWithGemmaFallback({
+      models,
+      signal: request.extractionSignal,
+      logger: {
+        warn: (message) => console.warn(`[extract ${request.extractionRequestId}] ${message}`),
+      },
+      generate: async (candidateModel, attempt) => {
+        const callStartedAt = Date.now();
+        console.info(`[extract ${request.extractionRequestId}] Trying ${candidateModel} (attempt ${attempt}/2).`);
+        const callSignal = AbortSignal.any([
+          AbortSignal.timeout(geminiCallTimeoutMs),
+          request.extractionSignal,
+        ]);
+
+        try {
+          const generated = await client.models.generateContent({
+            model: candidateModel,
+            contents,
+            config: { abortSignal: callSignal },
+          });
+          console.info(`[extract ${request.extractionRequestId}] ${candidateModel} answered in ${Date.now() - callStartedAt}ms.`);
+          return generated;
+        } catch (error) {
+          const safeMessage = String(error?.message || error?.name || "Unknown error").slice(0, 240);
+          console.warn(`[extract ${request.extractionRequestId}] ${candidateModel} failed after ${Date.now() - callStartedAt}ms: ${safeMessage}`);
+          throw error;
+        }
+      },
     });
 
     let event;
@@ -135,7 +211,7 @@ app.post("/api/extract", upload.single("poster"), async (request, response) => {
       event = extractJsonObject(result.text);
       if (!validateEvent(event)) throw new Error("The JSON did not match the event format.");
     } catch (error) {
-      console.warn("Model returned an unreadable poster response:", error.message);
+      console.warn(`[extract ${request.extractionRequestId}] Model returned an unreadable poster response: ${error.message}`);
       response.status(422).json({
         error: "Couldn't read the poster clearly, try a sharper, well-lit photo",
         model,
@@ -143,19 +219,34 @@ app.post("/api/extract", upload.single("poster"), async (request, response) => {
       return;
     }
 
-    response.json({ event, timezone, model });
+    console.info(`[extract ${request.extractionRequestId}] Extraction succeeded with ${answeredModel}.`);
+    response.json({ event, timezone, model: answeredModel });
   } catch (error) {
+    if (response.headersSent) return;
+
+    if (request.extractionSignal.aborted) {
+      console.error(`[extract ${request.extractionRequestId}] Extraction ended by request deadline after ${Date.now() - request.extractionStartedAt}ms.`);
+      response.status(503).json({ error: busyMessage, model: error.model || model });
+      return;
+    }
+
     const status = Number(error?.status) || 0;
     const apiKey = process.env.GEMINI_API_KEY;
     const providerMessage = String(error?.message || "Unknown error")
       .replaceAll(apiKey || "\u0000", "[redacted]")
       .slice(0, 500);
 
-    console.error("Gemini poster extraction failed:", {
+    console.error(`[extract ${request.extractionRequestId}] Gemini poster extraction failed:`, {
       status: status || "network/unknown",
       name: error?.name || "Error",
       message: providerMessage,
     });
+
+    if (isRetryableGeminiError(error)) {
+      console.error(`[extract ${request.extractionRequestId}] All configured model attempts failed after ${Date.now() - request.extractionStartedAt}ms.`);
+      response.status(503).json({ error: busyMessage, model: error.model || model });
+      return;
+    }
 
     let message;
     if (status === 400) {
@@ -163,31 +254,34 @@ app.post("/api/extract", upload.single("poster"), async (request, response) => {
     } else if (status === 401 || status === 403) {
       message = `Gemini API access was denied (${status}). Check that the API key is valid, has no incompatible restrictions, and the Gemini API is enabled for its Google project.`;
     } else if (status === 404) {
-      message = `Gemini could not find model "${model}". Check GEMINI_MODEL in .env.`;
-    } else if (status === 429) {
-      message = `Gemini API quota or rate limit reached (429): ${providerMessage}`;
+      message = `Gemini could not find model "${error.model || model}". Check GEMMA_MODELS in .env.`;
     } else if (status) {
       message = `Gemini API returned HTTP ${status}: ${providerMessage}`;
     } else {
       message = `Could not reach the Gemini API: ${providerMessage}`;
     }
 
-    response.status(500).json({ error: message, model });
+    console.error(`[extract ${request.extractionRequestId}] Final error after ${Date.now() - request.extractionStartedAt}ms: HTTP ${status || 500}.`);
+    response.status(status === 400 || status === 401 ? status : 500).json({ error: message, model: error.model || model });
   }
 });
 
-app.use((error, _request, response, _next) => {
+app.use((error, request, response, _next) => {
+  if (response.headersSent) return;
+
   if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+    console.error(`[extract ${request.extractionRequestId || "?"}] Upload exceeded the 8 MB limit.`);
     response.status(413).json({ error: "The image must be 8 MB or smaller.", model });
     return;
   }
 
   if (error.code === "INVALID_FILE_TYPE") {
+    console.error(`[extract ${request.extractionRequestId || "?"}] Upload rejected: ${error.message}`);
     response.status(400).json({ error: error.message, model });
     return;
   }
 
-  console.error("Request failed:", error);
+  console.error(`[extract ${request.extractionRequestId || "?"}] Request failed:`, error);
   response.status(500).json({ error: "The server could not process that request.", model });
 });
 

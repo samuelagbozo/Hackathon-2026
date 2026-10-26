@@ -15,6 +15,8 @@ const EMPTY_EVENT = {
 };
 
 const TIMEZONE = "Africa/Accra";
+const FETCH_TIMEOUT_MS = 70_000;
+const SLOW_READ_NOTICE_MS = 8_000;
 
 function dateToCompact(value) {
   return value.replaceAll("-", "");
@@ -175,6 +177,7 @@ function App() {
   const [previewUrl, setPreviewUrl] = useState("");
   const [event, setEvent] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [slowRead, setSlowRead] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
 
@@ -196,6 +199,7 @@ function App() {
   function selectFile(nextFile) {
     setError("");
     setEvent(null);
+    setSlowRead(false);
     if (!nextFile) return;
 
     if (!nextFile.type.startsWith("image/")) {
@@ -217,16 +221,25 @@ function App() {
     if (!file) return;
 
     setLoading(true);
+    setSlowRead(false);
     setError("");
     setEvent(null);
+    const controller = new AbortController();
+    const slowReadTimer = window.setTimeout(() => setSlowRead(true), SLOW_READ_NOTICE_MS);
+    const fetchTimeoutTimer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     try {
       const formData = new FormData();
       formData.append("poster", file);
-      const response = await fetch("/api/extract", { method: "POST", body: formData });
+      const response = await fetch("/api/extract", { method: "POST", body: formData, signal: controller.signal });
       // Read as text first: proxy/startup failures can return an empty body or
       // an HTML error page, neither of which response.json() can parse.
       const responseText = await response.text();
+      console.debug("[Campus Poster Reader] /api/extract raw response", {
+        status: response.status,
+        ok: response.ok,
+        body: responseText,
+      });
       let body = null;
       if (responseText.trim()) {
         try {
@@ -262,8 +275,13 @@ function App() {
         notes: extracted.notes ?? "",
       });
     } catch (readError) {
-      setError(readError.message);
+      setError(readError.name === "AbortError"
+        ? "Reading the poster timed out. Please try again."
+        : readError.message || "We couldn't read that poster. Please try again.");
     } finally {
+      window.clearTimeout(slowReadTimer);
+      window.clearTimeout(fetchTimeoutTimer);
+      setSlowRead(false);
       setLoading(false);
     }
   }
@@ -295,19 +313,19 @@ function App() {
         <ShapeGrid
           shape="square"
           direction="diagonal"
-          lineColor={theme === "dark" ? "#2b3e32" : "#b7d0be"}
-          hoverColor={theme === "dark" ? "#69a982" : "#0F5132"}
-          hoverFillColor={theme === "dark" ? "#69a982" : "#0F5132"}
-          fillOpacity={0.45}
+          lineColor={theme === "dark" ? "#26373e" : "#b7d0be"}
+          hoverColor={theme === "dark" ? "#00a884" : "#0F5132"}
+          hoverFillColor={theme === "dark" ? "#00a884" : "#0F5132"}
+          fillOpacity={theme === "dark" ? 0.2 : 0.45}
           cellSize={40}
           speed={0.5}
           tiltX={0}
           tiltY={0}
           rainbow={false}
-          opacity={0.55}
-          glow={0.08}
+          opacity={theme === "dark" ? 0.32 : 0.55}
+          glow={theme === "dark" ? 0.02 : 0.08}
           clickCascade={false}
-          backgroundColor={theme === "dark" ? "#171d19" : "#FAF6EE"}
+          backgroundColor={theme === "dark" ? "#0b141a" : "#FAF6EE"}
         />
       </div>
       <header className="app-header">
@@ -330,7 +348,7 @@ function App() {
               title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
             >
               {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-              <span>{theme === "dark" ? "Dark mode" : "Light mode"}</span>
+              <span className="hidden min-[400px]:inline">{theme === "dark" ? "Dark mode" : "Light mode"}</span>
             </button>
           </div>
         </div>
@@ -339,8 +357,8 @@ function App() {
       <main id="top" className="mx-auto max-w-6xl px-4 pb-12 pt-10 sm:px-8 sm:pb-16 sm:pt-16">
         <section className="mb-9 max-w-4xl sm:mb-12">
           <p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-forest">A KNUST campus companion</p>
-          <h1 className="font-display text-5xl font-extrabold leading-[0.98] tracking-[-0.045em] text-ink sm:text-7xl">
-            Drop a poster.<br className="hidden sm:block" /> <span className="text-forest">Never miss</span> an event.
+          <h1 className="font-display text-[clamp(2.25rem,11vw,3rem)] font-extrabold leading-[0.98] tracking-[-0.045em] text-ink sm:text-7xl">
+            Drop a poster.<br /> <span className="text-forest">Never miss</span> an event.
           </h1>
           <p className="mt-5 max-w-2xl text-lg leading-7 text-muted sm:text-xl">
             Snap any notice on campus and we’ll put it in your calendar.
@@ -373,16 +391,34 @@ function App() {
               </span>
               <p className="mt-4 font-display text-lg font-bold text-ink">Drop an event poster here</p>
               <p className="mt-1 text-sm text-muted">or choose an image from your device</p>
-              <label htmlFor="poster-file" className="mt-5 inline-flex min-h-10 cursor-pointer items-center justify-center rounded-md bg-forest px-5 text-sm font-semibold text-white transition hover:bg-gold hover:text-ink">
+              <div className="mt-5 flex w-full flex-col justify-center gap-2 min-[400px]:flex-row">
+              <label htmlFor="poster-file" className="inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-md bg-forest px-5 text-sm font-semibold text-white transition hover:bg-gold hover:text-ink min-[400px]:w-auto">
                 Choose image
               </label>
+              <label htmlFor="poster-camera" className="camera-upload-action inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 border border-forest bg-transparent px-5 text-sm font-semibold text-forest transition hover:bg-forest hover:text-white min-[400px]:w-auto">
+                <CameraIcon /> Take photo
+              </label>
+              </div>
               <input
                 id="poster-file"
                 className="sr-only"
                 type="file"
                 accept="image/*"
+                onChange={(event) => {
+                  selectFile(event.target.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <input
+                id="poster-camera"
+                className="sr-only"
+                type="file"
+                accept="image/*"
                 capture="environment"
-                onChange={(event) => selectFile(event.target.files?.[0])}
+                onChange={(event) => {
+                  selectFile(event.target.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
               />
             </div>
 
@@ -401,9 +437,20 @@ function App() {
           </div>
 
           {error && (
-            <div role="alert" className="mt-4 flex items-start gap-2 border border-warning-border bg-warning-background px-3.5 py-3 text-sm text-warning-foreground">
-              <WarningIcon />
-              <span>{error}</span>
+            <div role="alert" className="mt-4 flex flex-col items-start gap-2 border border-warning-border bg-warning-background px-3.5 py-3 text-sm text-warning-foreground sm:flex-row sm:items-center">
+              <div className="flex min-w-0 items-start gap-2">
+                <WarningIcon />
+                <span>{error}</span>
+              </div>
+              {file && !loading && (
+                <button
+                  type="button"
+                  onClick={readPoster}
+                  className="inline-flex min-h-9 shrink-0 items-center justify-center border border-warning-border bg-paper px-3 text-sm font-semibold text-ink transition-colors hover:border-forest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest sm:ml-auto"
+                >
+                  Try again
+                </button>
+              )}
             </div>
           )}
 
@@ -415,7 +462,7 @@ function App() {
               disabled={!file || loading}
               className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-forest px-5 text-sm font-semibold text-white transition-colors hover:bg-gold hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? <span className="reading-pulse" role="status" aria-live="polite">Reading poster...</span> : <>Read poster <ArrowIcon /></>}
+              {loading ? <span className="reading-pulse" role="status" aria-live="polite">{slowRead ? "Still reading, the model is busy..." : "Reading poster..."}</span> : <>Read poster <ArrowIcon /></>}
             </button>
           </div>
         </section>
@@ -470,7 +517,7 @@ function App() {
 
             <div className="ticket-stub -mx-5 mt-6 grid grid-cols-1 gap-4 px-5 py-5 sm:-mx-8 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] sm:px-8">
               <Field label="Date" name="date" type="date" value={event.date} onChange={(e) => updateEvent(e.target)} />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
                 <Field label="Start time" name="start_time" type="time" value={event.start_time} onChange={(e) => updateEvent(e.target)} />
                 <Field label="End time" name="end_time" type="time" value={event.end_time} onChange={(e) => updateEvent(e.target)} />
               </div>
@@ -523,6 +570,10 @@ function App() {
 
 function CalendarIcon() {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className="size-5"><rect x="3.5" y="5.5" width="17" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.8"/><path d="M7.5 3.5v4M16.5 3.5v4M4 9.5h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="m9 14 2 2 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+}
+
+function CameraIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className="size-5"><path d="M4 7.5h3l1.5-2h7l1.5 2h3A1.5 1.5 0 0 1 21.5 9v9a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 18V9A1.5 1.5 0 0 1 4 7.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><circle cx="12" cy="13" r="3.25" stroke="currentColor" strokeWidth="1.7"/></svg>;
 }
 
 function UploadIcon() {
